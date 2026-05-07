@@ -1,0 +1,202 @@
+-- =========================
+-- 1. TABLE CREATION
+-- =========================
+
+-- OWNER
+CREATE TABLE Owner (
+    owner_id INT PRIMARY KEY,
+    oname VARCHAR(100),
+    email VARCHAR(100) UNIQUE,
+    opassword VARCHAR(100),
+    contact_no VARCHAR(15)
+);
+
+-- ADDRESS
+CREATE TABLE Address (
+    address_id INT PRIMARY KEY,
+    city VARCHAR(50),
+    state VARCHAR(50),
+    pincode VARCHAR(10),
+    owner_id INT UNIQUE,
+    FOREIGN KEY (owner_id) REFERENCES Owner(owner_id) ON DELETE CASCADE
+);
+
+-- SERVICE
+CREATE TABLE Service (
+    service_id INT PRIMARY KEY,
+    sname VARCHAR(100),
+    cost DECIMAL(10,2) CHECK (cost >= 0)
+);
+
+-- STAFF
+CREATE TABLE Staff (
+    staff_id INT PRIMARY KEY,
+    sname VARCHAR(100) NOT NULL,
+    age INT CHECK (age >= 0),
+    email VARCHAR(100) UNIQUE NOT NULL,
+    spassword VARCHAR(100) NOT NULL,
+    contact_no VARCHAR(15) NOT NULL,
+    doj DATE NOT NULL,
+    salary DECIMAL(10,2) CHECK (salary >= 0),
+    service_id INT,
+    FOREIGN KEY (service_id) REFERENCES Service(service_id) ON DELETE SET NULL
+);
+
+-- PET
+CREATE TABLE Pet (
+    pet_id INT PRIMARY KEY,
+    pname VARCHAR(100),
+    age INT CHECK (age >= 0),
+    breed VARCHAR(50),
+    owner_id INT,
+    staff_id INT,
+    FOREIGN KEY (owner_id) REFERENCES Owner(owner_id) ON DELETE CASCADE,
+    FOREIGN KEY (staff_id) REFERENCES Staff(staff_id) ON DELETE SET NULL
+);
+
+-- MEDICAL RECORD
+CREATE TABLE Medical_Record (
+    medical_id INT PRIMARY KEY,
+    mdate DATE,
+    mdescription VARCHAR(500),
+    pet_id INT,
+    staff_id INT,
+    FOREIGN KEY (pet_id) REFERENCES Pet(pet_id) ON DELETE CASCADE,
+    FOREIGN KEY (staff_id) REFERENCES Staff(staff_id) ON DELETE SET NULL
+);
+
+-- APPOINTMENT
+CREATE TABLE Appointment (
+    appointment_id INT PRIMARY KEY,
+    service_start DATE,
+    service_end DATE,
+    adate DATE,
+    astatus VARCHAR(50) DEFAULT 'Pending',
+    pet_id INT,
+    owner_id INT,
+    service_id INT,
+    FOREIGN KEY (pet_id) REFERENCES Pet(pet_id) ON DELETE CASCADE,
+    FOREIGN KEY (owner_id) REFERENCES Owner(owner_id) ON DELETE CASCADE,
+    FOREIGN KEY (service_id) REFERENCES Service(service_id) ON DELETE SET NULL,
+    CHECK (service_end >= service_start)
+);
+
+-- ADMIN
+CREATE TABLE Admin (
+    admin_id INT PRIMARY KEY,
+    aname VARCHAR(100) NOT NULL,
+    age INT CHECK (age >= 0),
+    email VARCHAR(100) UNIQUE NOT NULL,
+    apassword VARCHAR(100) NOT NULL,
+    contact_no VARCHAR(15) NOT NULL
+);
+
+-- PAYMENT
+CREATE TABLE Payment (
+    payment_id INT PRIMARY KEY,
+    method VARCHAR(50),
+    pdate DATE,
+    amount DECIMAL(10,2) CHECK (amount >= 0),
+    pstatus VARCHAR(50) DEFAULT 'Pending',
+    appointment_id INT,
+    admin_id INT,
+    FOREIGN KEY (appointment_id) REFERENCES Appointment(appointment_id) ON DELETE CASCADE,
+    FOREIGN KEY (admin_id) REFERENCES Admin(admin_id) ON DELETE CASCADE,
+    CHECK (
+        (pstatus = 'Paid' AND pdate IS NOT NULL) OR 
+        (pstatus = 'Pending' AND pdate IS NULL)
+    )
+);
+
+-- =========================
+-- 2. FUNCTIONS
+-- =========================
+
+-- Function: Calculate days between dates
+CREATE OR REPLACE FUNCTION fn_days_between(dt1 DATE, dt2 DATE)
+RETURN INT
+IS
+BEGIN
+    RETURN dt2 - dt1 + 1;
+END;
+/
+
+-- Function: Calculate total cost
+CREATE OR REPLACE FUNCTION fn_total_cost (
+    svc IN NUMBER,
+    days IN NUMBER
+) RETURN NUMBER
+IS
+    unit_cost NUMBER(10,2);
+BEGIN
+    SELECT cost INTO unit_cost
+    FROM Service
+    WHERE service_id = svc;
+
+    RETURN unit_cost * days;
+END;
+/
+
+-- =========================
+-- 3. TRIGGERS
+-- =========================
+
+-- Trigger: Auto calculate payment
+CREATE OR REPLACE TRIGGER trg_calc_payment_amount
+BEFORE INSERT OR UPDATE ON Payment
+FOR EACH ROW
+DECLARE
+    v_service_id NUMBER;
+    v_start DATE;
+    v_end DATE;
+    v_days NUMBER;
+BEGIN
+    SELECT service_start, service_end, service_id
+    INTO v_start, v_end, v_service_id
+    FROM Appointment
+    WHERE appointment_id = :NEW.appointment_id;
+
+    v_days := fn_days_between(v_start, v_end);
+
+    :NEW.amount := fn_total_cost(v_service_id, v_days);
+END;
+/
+
+-- Trigger: Update appointment status
+CREATE OR REPLACE TRIGGER trg_update_astatus
+BEFORE INSERT OR UPDATE ON Appointment
+FOR EACH ROW
+BEGIN
+    IF :NEW.service_end >= SYSDATE THEN
+        :NEW.astatus := 'Scheduled';
+    ELSE
+        :NEW.astatus := 'Completed';
+    END IF;
+END;
+/
+
+-- =========================
+-- 4. SAMPLE DATA (OPTIONAL)
+-- =========================
+
+INSERT INTO Service VALUES (1, 'Premium', 1000);
+INSERT INTO Service VALUES (2, 'Standard', 600);
+INSERT INTO Service VALUES (3, 'Basic', 300);
+
+INSERT INTO Owner VALUES (1, 'Hitesh', 'hitesh@gmail.com', '123', '9876543210');
+
+INSERT INTO Staff VALUES (1, 'Rahul', 28, 'rahul@gmail.com', 'pass', '9999999999', SYSDATE, 20000, 1);
+
+INSERT INTO Pet VALUES (1, 'Bruno', 3, 'Labrador', 1, 1);
+
+INSERT INTO Appointment VALUES (1, SYSDATE, SYSDATE+3, SYSDATE, 'Pending', 1, 1, 1);
+
+INSERT INTO Admin VALUES (1, 'Admin1', 35, 'admin@gmail.com', 'admin', '8888888888');
+
+INSERT INTO Payment VALUES (1, 'UPI', NULL, 0, 'Pending', 1, 1);
+
+-- =========================
+-- 5. TEST QUERY
+-- =========================
+
+SELECT * FROM Payment;
